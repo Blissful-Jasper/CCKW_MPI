@@ -55,26 +55,11 @@ from .phase import (
 
 # ===== 诊断工具 =====
 
-# 注意: diagnostics 模块需要额外的依赖 (metpy, geocat)
-# 如果需要使用 GMS 相关功能，请确保安装这些依赖
-_diagnostics_available = False
-try:
-    from .diagnostics import (
-        calc_horizontal_GMS,
-        calc_vertical_GMS,
-        gross_moist_stability,
-    )
-    _diagnostics_available = True
-except ImportError as e:
-    import warnings
-    warnings.warn(f"诊断模块导入失败: {e}. 如需使用 GMS 功能，请安装 metpy 和 geocat-comp", ImportWarning)
-    # 提供占位函数
-    def _diagnostics_unavailable(*args, **kwargs):
-        raise ImportError("诊断模块不可用。请安装依赖: pip install metpy geocat-comp")
-    
-    calc_horizontal_GMS = _diagnostics_unavailable
-    calc_vertical_GMS = _diagnostics_unavailable
-    gross_moist_stability = _diagnostics_unavailable
+from .diagnostics import (
+    calc_horizontal_GMS,
+    calc_vertical_GMS,
+    gross_moist_stability,
+)
 
 # ===== 绘图功能 =====
 
@@ -159,11 +144,6 @@ __all__ = [
     'load_data',
     'filter_series',
     'calc_radon_angle',
-    
-    # 信息函数
-    'get_version',
-    'list_available_waves',
-    'print_info',
 ]
 
 

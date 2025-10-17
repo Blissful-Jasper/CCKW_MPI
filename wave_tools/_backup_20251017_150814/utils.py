@@ -9,16 +9,9 @@ from skimage.transform import radon, rescale
 from typing import Iterable, Sequence, List, Union, Optional, Set, AnyStr, overload
 import matplotlib as mpl
 from matplotlib import font_manager
+import healpy as hp
 from scipy import interpolate
 from numba import jit, prange
-
-# Optional dependency
-try:
-    import healpy as hp
-    HAS_HEALPY = True
-except ImportError:
-    HAS_HEALPY = False
-    hp = None
 
 
 PathLike = Union[str, "os.PathLike[str]"]
@@ -426,9 +419,6 @@ def dataarray_healpix_to_equatorial_latlon(
     2. 使用向量化操作批量处理
     3. 对插值使用numba加速
     """
-    if not HAS_HEALPY:
-        raise ImportError("healpy is required for HEALPix operations. Install with: pip install healpy")
-    
     if minmax_lat > MAXIMUM_LAT_RANGE:
         raise ValueError(f"minmax_lat={minmax_lat} too wide for equatorial analysis.")
 
@@ -651,9 +641,6 @@ def _get_pix_latlon(nside: int, nest: bool, pix_index: Optional[np.ndarray] = No
     获取HEALPix像素的经纬度坐标
     Get lat/lon coordinates for HEALPix pixels
     """
-    if not HAS_HEALPY:
-        raise ImportError("healpy is required for HEALPix operations. Install with: pip install healpy")
-    
     if nest is False:
         raise NotImplementedError("nest=False is not implemented.")
     
@@ -678,27 +665,13 @@ def dataarray_healpix_to_equatorial_latlon_fast(
     超快速版本：适用于大数据集
     Ultra-fast version for large datasets
     
-    Parameters
-    ----------
-    healpix_dataarray : xr.DataArray
-        输入的HEALPix数据
-    nside : int
-        HEALPix nside参数
-    nest : bool
-        是否使用nested scheme
-    minmax_lat : float
-        纬度范围 (±minmax_lat)
-    use_dask : bool
-        是否使用dask进行并行计算
-    
-    Returns
-    -------
-    xr.DataArray
-        转换后的经纬度网格数据
+    参数:
+        healpix_dataarray: 输入的HEALPix数据
+        nside: HEALPix nside参数
+        nest: 是否使用nested scheme
+        minmax_lat: 纬度范围 (±minmax_lat)
+        use_dask: 是否使用dask进行并行计算
     """
-    if not HAS_HEALPY:
-        raise ImportError("healpy is required for HEALPix operations. Install with: pip install healpy")
-    
     if minmax_lat > MAXIMUM_LAT_RANGE:
         raise ValueError(f"minmax_lat={minmax_lat} too wide for equatorial analysis.")
     
@@ -759,9 +732,6 @@ def get_region_healpix_(zoom: int = 8, extent: list = [-180, 181, -16, 16], nest
     icell : np.ndarray
         符合范围的 Healpix 网格索引 / Indices of pixels within the extent
     """
-    if not HAS_HEALPY:
-        raise ImportError("healpy is required for HEALPix operations. Install with: pip install healpy")
-    
     nside = hp.order2nside(zoom)     # 计算 nside / compute nside
     npix  = hp.nside2npix(nside)     # 总像素数 / total pixels
     print(f"nside={nside}, npix={npix}")
