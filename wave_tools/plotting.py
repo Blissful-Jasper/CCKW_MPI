@@ -343,6 +343,40 @@ def plot_spatial_field(data: xr.DataArray,
     
     return f
 
+def set_axis_for_wave(ax, text_size, freq_lines=True, depth=True, cpd_lines=[3, 6, 30], max_wn_plot=15, max_freq_plot=0.5):
+    ax.axvline(x=0, color='k', linestyle='--')
+    ax.set_xlim((-max_wn_plot,max_wn_plot))
+    ax.set_ylim((0.02,max_freq_plot))
+    kw_x,kw_y = get_cckw_envelope_curve()
+    if max_wn_plot is not None and max_freq_plot is not None:
+        ax.set_xlim((-max_wn_plot, max_wn_plot))
+        ax.set_ylim((0.02, max_freq_plot))
+
+    if freq_lines:
+        # Assuming self.freq_lines and self.cpd_lines are defined elsewhere
+        for d in cpd_lines:
+            if (1./d) <= max_freq_plot:
+                ax.axhline(y=1./d, color='k', linestyle='--',linewidth=0.5)
+                ax.text(-max_wn_plot+0.8, (1./d+0.01), str(d)+' days', color='k',
+                        size=text_size-6, bbox={'facecolor': 'w', 'alpha': 0.9, 'edgecolor': 'none'})
+    if depth:
+        ax.plot(kw_x[0], kw_y[0], 'green', linewidth=1.2, linestyle='solid',zorder=5)
+        # Define the range for filtering
+        ax.xaxis.set_minor_locator(ticker.AutoMinorLocator(5))
+        left, width = .25, .5
+        bottom, height = .25, .5
+        right = left + width
+        top = bottom + height
+        ax.text(right+10, 0.29  * (bottom+top),'kelvin', ha="center",va="center",size=text_size-6,
+                bbox={'facecolor':'w','alpha':0.9,'edgecolor':'none'})
+        ax.text(right+5.6, 0.4 * (bottom+top),'h=90', ha="center",va="center",size=text_size-6,
+                bbox={'facecolor':'w','alpha':0.9,'edgecolor':'none'})
+        ax.text(right+10.5, 0.38 * (bottom+top),'h=25', ha="center",va="center",size=text_size-6,
+                bbox={'facecolor':'w','alpha':0.9,'edgecolor':'none'})
+        ax.text(right+9.9, 0.2 * (bottom+top),'h=8', ha="center",va="center",size=text_size-6,
+                bbox={'facecolor':'w','alpha':0.9,'edgecolor':'none'})
+
+
 
 # ==================== 泰勒图 ====================
 

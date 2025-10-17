@@ -77,32 +77,52 @@ def remove_annual_cycle(data: xr.DataArray, samples_per_day: float, freq_cutoff:
     return xr.DataArray(filtered_data, dims=data.dims, coords=data.coords)
 
 
-def decompose_symmetric_antisymmetric(data_array: xr.DataArray) -> Tuple[xr.DataArray, xr.DataArray]:
+def decompose_symmetric_antisymmetric(data_array: xr.DataArray) -> xr.DataArray:
     """
-    改进的对称/反对称分解（自动处理缺失赤道）
+    对称/反对称分解（完全按照Wheeler-Kiladis原始方法）
+    
+    注意：
+    -----
+    - symmetric = 0.5 * (data - flip(data))     # 南北反相
+    - antisymmetric = 0.5 * (data + flip(data)) # 南北同相
+    - 结果数组：南半球存储symmetric，北半球存储antisymmetric
+    
+    参数:
+    -----
+    data_array : xr.DataArray
+        输入数据，维度为 (time, lat, lon)
     
     返回:
     -----
-    symmetric, antisymmetric : 对称分量和反对称分量
+    result : xr.DataArray
+        处理后的数据，南半球=对称分量，北半球=反对称分量
     """
-    lat_values = data_array.lat.values
-    has_equator = any(abs(lat) < 1e-6 for lat in lat_values)
+    lat_dim = data_array.dims.index('lat')
+    nlat = data_array.shape[lat_dim]
     
-    # 如果缺少赤道，插值添加
-    if not has_equator:
-        lat_min, lat_max = lat_values.min(), lat_values.max()
-        lat_step = abs(np.diff(lat_values)[0])
-        negative_lats = np.arange(lat_min, 0, lat_step)
-        positive_lats = np.arange(lat_step, lat_max + lat_step/2, lat_step)
-        new_lats = np.concatenate([negative_lats, [0.0], positive_lats])
-        data_array = data_array.interp(lat=new_lats, method='linear')
+    # 计算对称和反对称分量（原始公式）
+    symmetric = 0.5 * (data_array.values - np.flip(data_array.values, axis=lat_dim))
+    antisymmetric = 0.5 * (data_array.values + np.flip(data_array.values, axis=lat_dim))
     
-    # 翻转并分解
-    data_flipped = data_array.sel(lat=data_array.lat[::-1])
-    symmetric = 0.5 * (data_array + data_flipped)
-    antisymmetric = 0.5 * (data_array - data_flipped)
+    # 转为DataArray
+    symmetric = xr.DataArray(symmetric, dims=data_array.dims, coords=data_array.coords)
+    antisymmetric = xr.DataArray(antisymmetric, dims=data_array.dims, coords=data_array.coords)
     
-    return symmetric, antisymmetric
+    # 组合结果：南半球=对称，北半球=反对称
+    result = data_array.copy()
+    half = nlat // 2
+    
+    if nlat % 2 == 0:
+        # 偶数纬度
+        result.values[:, :half, :] = symmetric.values[:, :half, :]
+        result.values[:, half:, :] = antisymmetric.values[:, half:, :]
+    else:
+        # 奇数纬度（包含赤道）
+        result.values[:, :half, :] = symmetric.values[:, :half, :]
+        result.values[:, half+1:, :] = antisymmetric.values[:, half+1:, :]
+        result.values[:, half, :] = symmetric.values[:, half, :]  # 赤道使用对称分量
+    
+    return result
 
 
 # ============= 主类 =============
@@ -171,7 +191,7 @@ class WKSpectralAnalysis:
     
     def preprocess(self) -> 'WKSpectralAnalysis':
         """
-        预处理数据：去趋势、去年循环、对称分解
+        预处理数据：去趋势、去年循环、对称/反对称分解
         
         返回:
         ----
@@ -188,17 +208,12 @@ class WKSpectralAnalysis:
         # 去年循环
         filtered = remove_annual_cycle(detrended, self.config.SAMPLES_PER_DAY, self.config.FREQ_CUTOFF)
         
-        # 对称/反对称分解
-        symmetric, antisymmetric = decompose_symmetric_antisymmetric(filtered)
-        
-        # 合并：南半球=对称，北半球=反对称
-        nlat = len(filtered.lat)
-        half = nlat // 2
-        self.processed_data = filtered.copy()
-        self.processed_data.values[:, :half, :] = symmetric.values[:, :half, :]
-        self.processed_data.values[:, half:, :] = antisymmetric.values[:, half:, :]
+        # 对称/反对称分解（原始方法）
+        self.processed_data = decompose_symmetric_antisymmetric(filtered)
         
         print(f"预处理完成，耗时 {time.time() - start_time:.1f} 秒")
+        print(f"  数据形状: {self.processed_data.shape}")
+        print(f"  纬度范围: {self.processed_data.lat.values}")
         return self
     
     def compute_spectrum(self) -> 'WKSpectralAnalysis':

@@ -23,6 +23,36 @@ except ImportError:
 
 PathLike = Union[str, "os.PathLike[str]"]
 
+def create_cmap_from_string(color_string: str) -> colors.ListedColormap:
+    """
+    根据给定的颜色字符串创建一个反转的颜色映射（Colormap）。
+
+    输入:
+        color_string (str): 一个字符串，每行包含一个颜色，可以是标准颜色名、RGB 值（如 '1,0,0' 表示红色），或十六进制颜色代码（如 '#FF5733'）。
+
+    输出:
+        ListedColormap: 返回一个基于输入颜色字符串的反转颜色映射对象（Colormap）。
+
+    示例:
+        color_string = '''
+        #FF5733
+        #33FF57
+        #3357FF
+        '''
+        
+        cmap = create_cmap_from_string(color_string)
+        plt.imshow(data, cmap=cmap)
+        plt.colorbar()
+        plt.show()
+    """
+    # 去除多余的空白行并分割每行
+    
+    color_list = color_string.strip().split('\n')
+    
+    # 创建并返回反转后的颜色映射对象
+    return colors.ListedColormap(color_list[::-1])
+
+
 def filter_series(series, min_wn, max_wn):
     return series[(series.index >= min_wn) & (series.index <= max_wn)]
 
