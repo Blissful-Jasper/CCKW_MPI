@@ -27,7 +27,7 @@ from wave_tools import *
 3. **波动滤波与提取** - 时空滤波提取Kelvin、ER、MRG等波动
 4. **波动相位分析** - 峰值检测和相位合成分析
 5. **EOF分析** - 支持SVD和xeofs两种方法的经验正交函数分解
-6. **诊断工具** - 总体湿稳定度(GMS)、Radon变换、静力能计算等
+6. **诊断工具** - Radon变换、计算等
 7. **专业绘图** - WK频谱图、地图、泰勒图、CCKW包络图等
 
 ---
@@ -423,13 +423,6 @@ results = analyzer.fit(data, n_modes=4)
 fig = analyzer.plot_vertical_profiles(n_modes=4, save_path='eof_profiles.png')
 analyzer.save_results('eof_results.pkl')
 
-# ===== 5. 诊断分析 =====
-h_gms, v_gms = gross_moist_stability(
-    'ta.nc', 'zg.nc', 'ua.nc', 'va.nc', 'wa.nc', 'hus.nc'
-)
-
-print(f"水平GMS: {h_gms.mean().values:.3f}")
-print(f"垂直GMS: {v_gms.mean().values:.3f}")
 ```
 
 ---
@@ -476,87 +469,3 @@ Jianpu. (2025). Wave Tools: A Python package for tropical atmospheric wave analy
 Hohai University. Email: xianpuji@hhu.edu.cn
 ```
 
----
-
-## 📧 联系方式
-
-**问题与建议**: xianpuji@hhu.edu.cn
-
-**参考文献**:
-- Wheeler & Kiladis (1999). *J. Atmos. Sci.*, 56(3), 374-399.
-- Matsuno (1966). *J. Meteor. Soc. Japan*, 44(1), 25-43.
-- Kiladis et al. (2009). *Rev. Geophys.*, 47(2).
-
----
-
-**版本**: 1.1.0 | **最后更新**: 2025-11-04
-    kelvin_ref=kelvin_zonal,
-    V_std=kelvin_zonal.std().values,
-    Nstd=1.0,
-    use_parallel=True
-)
-
-# ===== 4. 诊断分析 =====
-h_gms, v_gms = gross_moist_stability(
-    'ta.nc', 'zg.nc', 'ua.nc', 'va.nc', 'wa.nc', 'hus.nc'
-)
-```
-
----
-
-## 🔧 依赖库
-
-### 核心依赖
-```
-numpy >= 1.19.0
-xarray >= 0.16.0
-scipy >= 1.5.0
-matplotlib >= 3.3.0
-pandas >= 1.1.0
-joblib >= 1.0.0       # 并行计算
-```
-
-### 可选依赖
-```
-cmaps                 # NCL气象色标
-cartopy              # 地图投影
-healpy               # HEALPix球面网格处理
-numba                # JIT加速计算
-metpy                # 气象计算工具
-geocat-comp          # NCAR地球科学计算
-xeofs                # EOF分析（可选方法）
-global-land-mask     # 陆地/海洋掩膜
-scikit-image         # Radon变换
-```
-
-**安装全部依赖**:
-```bash
-pip install numpy xarray scipy matplotlib pandas joblib
-pip install cmaps cartopy healpy numba metpy geocat-comp xeofs global-land-mask scikit-image
-```
-
----
-
-## 📝 引用
-
-如果本工具包对您的研究有帮助，请引用：
-
-```
-Jianpu. (2025). Wave Tools: A Python package for tropical atmospheric wave analysis. 
-Hohai University. Email: xianpuji@hhu.edu.cn
-```
-
----
-
-## 📧 联系方式
-
-**问题与建议**: xianpuji@hhu.edu.cn
-
-**参考文献**:
-- Wheeler & Kiladis (1999). *J. Atmos. Sci.*, 56(3), 374-399.
-- Matsuno (1966). *J. Meteor. Soc. Japan*, 44(1), 25-43.
-- Kiladis et al. (2009). *Rev. Geophys.*, 47(2).
-
----
-
-**版本**: 1.1.0 | **最后更新**: 2025-11-04
