@@ -332,6 +332,482 @@ def optimize_peak_detection(
     return V_peak_da, local_min_max_da
 
 
+def meridional_projection(
+    inputdata: xr.DataArray,
+    lat: np.ndarray,
+    lat_0: float = 9.0,
+    lat_tropics: float = 10.0,
+    omega: int = 0
+) -> xr.DataArray:
+    """
+    对输入变量进行纬向投影，使用高斯加权和可选的纬向窗口（omega）限制。
+
+    Parameters
+    ----------
+    inputdata : xr.DataArray
+        输入数据，维度为 (time, lat, lon)
+    lat : np.ndarray
+        纬度数组，与 inputdata.lat 对应
+    lat_0 : float, default=9.0
+        高斯加权中控制尺度的参数
+    lat_tropics : float, default=10.0
+        omega 限定热带范围
+    omega : int, default=0
+        如果为0，限制在 |lat| <= lat_tropics 内；如果为1，则相反
+
+    Returns
+    -------
+    xr.DataArray
+        纬向投影后的数据，维度为 (time, lon)
+
+    Examples
+    --------
+    >>> kelvin_eq = meridional_projection(kelvin_data, lat)
+    >>> print(kelvin_eq.shape)  # (time, lon)
+    """
+    KW_coef = np.exp(-(lat / (2 * lat_0)) ** 2)
+
+    if omega == 0:
+        omega_mask = np.where(np.abs(lat) > lat_tropics, 0, 1)
+    else:
+        omega_mask = np.where(np.abs(lat) > lat_tropics, 1, 0)
+
+    KW_filt = KW_coef * omega_mask
+    SUM = np.sum(KW_filt)
+
+    V = inputdata
+    if V.ndim != 3 or V.dims != ('time', 'lat', 'lon'):
+        raise ValueError("inputdata 必须是 (time, lat, lon) 的 xarray.DataArray")
+
+    nt, nlat, nlon = V.shape
+    V_T = np.transpose(V.data, (0, 2, 1))  # shape: (time, lon, lat)
+
+    if np.sum(np.isnan(V_T)) == 0:
+        # 无缺失值
+        V_projected = np.inner(V_T, KW_filt) / SUM  # shape: (time, lon)
+    else:
+        # 有缺失值
+        KW_filt_large = np.tile(KW_filt, (nt, nlon, 1))  # shape: (nt, nlon, nlat)
+        KW_filt_masked = np.ma.array(KW_filt_large, mask=np.isnan(V_T))
+        Vsum = np.nansum(V_T * KW_filt_masked, axis=2)
+        KWsum = np.nansum(KW_filt_masked, axis=2)
+        V_projected = Vsum / KWsum
+
+    # 构建输出 DataArray
+    return xr.DataArray(
+        data=V_projected,
+        dims=("time", "lon"),
+        coords={
+            "time": inputdata.time,
+            "lon": inputdata.lon
+        },
+        name="meridional_projection"
+    )
+
+
+def calculate_kelvin_phase(
+    kelvin_filtered: xr.DataArray,
+    V_peak: xr.DataArray,
+    correct_phase: bool = True
+) -> xr.DataArray:
+    """
+    计算 Kelvin 波的相位。
+
+    Parameters
+    ----------
+    kelvin_filtered : xr.DataArray
+        滤波后的 Kelvin 波数据 (time, lon)
+    V_peak : xr.DataArray
+        峰值标记数据 (time, lon)
+    correct_phase : bool, default=True
+        是否进行相位修正（增强/衰减）
+
+    Returns
+    -------
+    xr.DataArray
+        相位数据 (time, lon)，范围 [-π, π]
+
+    Examples
+    --------
+    >>> phase = calculate_kelvin_phase(kelvin_eq, V_peak)
+    >>> print(f"Phase range: [{phase.min().values:.2f}, {phase.max().values:.2f}]")
+    """
+    V = kelvin_filtered.data
+    V_peak_data = V_peak.data
+
+    # 标记增强/衰减阶段
+    nt, nlon = V.shape
+    enh_dec = np.full((nt, nlon), np.nan)
+    enh_dec[1:-1, :] = np.where(
+        (V[1:-1, :] > V[0:-2, :]) & (V[1:-1, :] < V[2:, :]) & (~np.isnan(V_peak_data[1:-1, :])),
+        0, np.nan
+    )
+    enh_dec[1:-1, :] = np.where(
+        (V[1:-1, :] < V[0:-2, :]) & (V[1:-1, :] > V[2:, :]) & (~np.isnan(V_peak_data[1:-1, :])),
+        1, enh_dec[1:-1, :]
+    )
+
+    # 计算相位
+    V_norm = V / np.abs(V_peak_data)
+    phase = np.arcsin(V_norm)
+    phase = np.where(np.isfinite(V_peak_data), phase, np.nan)
+
+    if correct_phase:
+        # 相位修正
+        phase_corrected = phase.copy()
+        dec_neg = (enh_dec == 1) & (V_peak_data <= 0)
+        dec_pos = (enh_dec == 1) & (V_peak_data >= 0)
+        phase_corrected[dec_neg] = -np.pi - phase[dec_neg]
+        phase_corrected[dec_pos] = np.pi - phase[dec_pos]
+        phase_corrected = -phase_corrected
+        phase = phase_corrected
+
+    return xr.DataArray(
+        data=phase,
+        dims=kelvin_filtered.dims,
+        coords=kelvin_filtered.coords,
+        name="kelvin_phase"
+    )
+
+
+def phase_composite(
+    data: xr.DataArray,
+    phase: xr.DataArray,
+    n_bins: int = None,
+    phase_range: Tuple[float, float] = (-np.pi, np.pi)
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """
+    对数据进行相位合成分析。
+
+    Parameters
+    ----------
+    data : xr.DataArray
+        需要合成的数据 (time, lon) 或 (time, lat, lon)
+    phase : xr.DataArray
+        相位数据 (time, lon)
+    n_bins : int, optional
+        相位分bin数量，默认根据 phase_range 自动计算
+    phase_range : tuple, default=(-π, π)
+        相位范围
+
+    Returns
+    -------
+    phase_bin : np.ndarray
+        相位bin中心值
+    composite_mean : np.ndarray
+        各bin的平均值
+    composite_count : np.ndarray
+        各bin的样本数
+
+    Examples
+    --------
+    >>> phase_bin, composite_mean, count = phase_composite(pr_data, phase)
+    >>> plt.plot(phase_bin, composite_mean)
+    """
+    from scipy import stats as stat
+
+    if n_bins is None:
+        dph = 1 / np.pi
+        n_bins = int((phase_range[1] - phase_range[0]) / dph)
+    else:
+        dph = (phase_range[1] - phase_range[0]) / n_bins
+
+    mybin = np.arange(phase_range[0], phase_range[1] + dph * 2, dph) - dph / 2
+    phase_bin = mybin[:-1] + dph / 2
+
+    # 展平数据
+    phase_flat = phase.values.flatten()
+    data_flat = data.values.flatten()
+
+    # 移除NaN
+    mask = ~np.isnan(phase_flat) & ~np.isnan(data_flat)
+    phase_clean = phase_flat[mask]
+    data_clean = data_flat[mask]
+
+    # 统计
+    composite_count = stat.binned_statistic(
+        phase_clean, data_clean, statistic='count', bins=mybin
+    ).statistic
+
+    composite_mean = stat.binned_statistic(
+        phase_clean, data_clean, statistic='mean', bins=mybin
+    ).statistic
+
+    return phase_bin, composite_mean, composite_count
+
+
+def lag_composite(
+    data: xr.DataArray,
+    phase: xr.DataArray,
+    lon: np.ndarray,
+    lon_ref: float = 180.0,
+    nlag: int = 10,
+    phase_threshold: float = -np.pi / 2,
+    tolerance: float = 0.001
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """
+    对数据进行滞后合成分析。
+
+    Parameters
+    ----------
+    data : xr.DataArray
+        需要合成的数据 (time, lon)
+    phase : xr.DataArray
+        相位数据 (time, lon)
+    lon : np.ndarray
+        经度数组
+    lon_ref : float, default=180.0
+        参考经度
+    nlag : int, default=10
+        滞后步数
+    phase_threshold : float, default=-π/2
+        用于选择参考时刻的相位阈值
+    tolerance : float, default=0.001
+        相位匹配容差
+
+    Returns
+    -------
+    tlag : np.ndarray
+        滞后时间数组
+    composite : np.ndarray
+        合成数据 (2*nlag+1, nlon)
+    it_max : np.ndarray
+        参考时刻索引
+
+    Examples
+    --------
+    >>> tlag, composite, _ = lag_composite(pr_data, phase, lon, lon_ref=180)
+    >>> plt.contourf(lon, tlag, composite)
+    """
+    nt, nlon = data.shape
+
+    # 找到参考经度
+    ilon = np.argwhere(lon == lon_ref).squeeze()
+    phase_ref = phase.data[:, ilon]
+
+    # 找到满足相位条件的时刻
+    it_max = np.argwhere(np.abs(phase_ref - phase_threshold) < tolerance).squeeze()
+    it_max = np.where(((it_max <= nlag) | (it_max >= nt - nlag)), np.nan, it_max)
+    it_max = np.delete(it_max, np.isnan(it_max) == 1)
+    it_max = it_max.astype(dtype='int')
+
+    # 初始化合成数组
+    composite = np.full([2 * nlag + 1, nlon], np.nan)
+
+    # lag=0
+    composite[nlag, :] = np.nanmean(data.data[it_max, :], 0)
+
+    # lag != 0
+    for ilag in range(1, nlag + 1):
+        composite[nlag - ilag, :] = np.nanmean(data.data[it_max - ilag, :], 0)
+        composite[nlag + ilag, :] = np.nanmean(data.data[it_max + ilag, :], 0)
+
+    tlag = np.arange(-nlag, nlag + 1, 1)
+
+    return tlag, composite, it_max
+
+
+def save_composite_to_netcdf(
+    output_path: str,
+    pr_ano_comp: np.ndarray,
+    pr_kw_comp: np.ndarray,
+    lon: np.ndarray,
+    nlag: int,
+):
+    """
+    Save Kelvin wave composite precipitation data to a NetCDF file.
+
+    Parameters
+    ----------
+    output_path : str
+        Full path to save the NetCDF file.
+    pr_ano_comp : np.ndarray
+        Precipitation anomaly composite, shape (2*nlag+1, nlon)
+    pr_kw_comp : np.ndarray
+        Kelvin wave filtered precipitation composite, shape (2*nlag+1, nlon)
+    lon : np.ndarray
+        Longitude array, shape (nlon,)
+    nlag : int
+        Lag window size (before/after maximum), total time dimension is 2*nlag+1
+    """
+    from netCDF4 import Dataset
+
+    outdir = os.path.dirname(output_path)
+    if outdir and not os.path.exists(outdir):
+        os.makedirs(outdir, exist_ok=True)
+
+    nlon = len(lon)
+    ntlag = 2 * nlag + 1
+    tlag = np.arange(-nlag, nlag + 1)
+    lont, tlon = np.meshgrid(lon, tlag)
+
+    with Dataset(output_path, 'w', format='NETCDF4') as nc:
+        # Dimensions
+        nc.createDimension('lon', nlon)
+        nc.createDimension('tlag', ntlag)
+
+        # Variables
+        tlag_var = nc.createVariable('tlag', 'f4', ('tlag',))
+        lon_var = nc.createVariable('lon', 'f4', ('lon',))
+
+        prano_var = nc.createVariable('pr_ano_comp', 'f4', ('tlag', 'lon'))
+        prkw_var = nc.createVariable('pr_kw_comp', 'f4', ('tlag', 'lon'))
+
+        lont_var = nc.createVariable('lont', 'f4', ('tlag', 'lon'))
+        tlon_var = nc.createVariable('tlon', 'f4', ('tlag', 'lon'))
+
+        # Metadata
+        tlag_var.standard_name = 'lag_time'
+        tlag_var.units = 'lag (time steps from maximum)'
+
+        lon_var.standard_name = 'longitude'
+        lon_var.units = 'degrees_east'
+
+        prano_var.units = 'mm/day'
+        prano_var.long_name = 'Composite of precipitation anomaly (climatology removed)'
+
+        prkw_var.units = 'mm/day'
+        prkw_var.long_name = 'Composite of Kelvin-wave-filtered precipitation'
+
+        lont_var.long_name = 'Longitude meshgrid for plotting'
+        tlon_var.long_name = 'Time lag meshgrid for plotting'
+
+        # Write
+        tlag_var[:] = tlag
+        lon_var[:] = lon
+
+        prano_var[:, :] = pr_ano_comp
+        prkw_var[:, :] = pr_kw_comp
+
+        lont_var[:, :] = lont
+        tlon_var[:, :] = tlon
+
+    print(f"✅ NetCDF saved to: {output_path}")
+
+
+def composite_kw_phase(
+    kelvin: xr.DataArray,
+    pr_ori: xr.DataArray,
+    lon: np.ndarray,
+    model_name: str,
+    output_dir: str,
+    lon_ref: float = 180.0,
+    nlag: int = 10,
+    Nstd: float = 1.0,
+    debug_plot: bool = False,
+):
+    """
+    Perform phase composite analysis for Kelvin-wave-filtered precipitation and save results.
+
+    This function wraps existing helpers in this module: meridional_projection,
+    remove_clm, optimize_peak_detection, calculate_kelvin_phase, phase_composite,
+    lag_composite, and save_composite_to_netcdf.
+    """
+    import os
+    from sklearn import linear_model
+
+    lat = kelvin.lat.values
+
+    # meridional projection
+    kelvin_ref = meridional_projection(kelvin, lat)
+    pr_ori_eq = meridional_projection(pr_ori, lat)
+
+    # remove climatology / anomalies
+    pr_ano = remove_clm(pr_ori)
+    pr_ano_eq = meridional_projection(pr_ano, lat)
+
+    # peak detection
+    V = kelvin_ref.data
+    V_std = np.nanstd(V)
+    V_peak, _ = optimize_peak_detection(V, kelvin_ref, V_std, Nstd=Nstd)
+
+    print('Std of variable:', V_std)
+
+    # compute phase
+    phase = calculate_kelvin_phase(kelvin_ref, V_peak)
+
+    # phase composite
+    phase_bin, pr_kw_phase_mean, counts = phase_composite(kelvin_ref, phase)
+
+    # save simple phase result
+    np.savez(
+        os.path.join(output_dir, f'{model_name}_precip_kw_{lon_ref}.npz'),
+        KW_filtered_pr=kelvin_ref,
+        lon=lon,
+        phase_bin=phase_bin,
+        phase_correct=phase,
+        pr_kw=pr_kw_phase_mean,
+    )
+
+    # lag composite
+    tlag, pr_kw_comp, it_max = lag_composite(kelvin_ref, phase, lon, lon_ref=lon_ref, nlag=nlag)
+    pr_ano_comp = np.full_like(pr_kw_comp, np.nan)
+    # For anomaly composite we need pr_ano_eq
+    if pr_ano_eq is not None:
+        # align pr_ano_eq shape
+        pr_ano_comp = np.full_like(pr_kw_comp, np.nan)
+        # compute center composite
+        if it_max.size > 0:
+            pr_ano_comp[nlag, :] = np.nanmean(pr_ano_eq.data[it_max, :], axis=0)
+            pr_kw_comp[nlag, :] = np.nanmean(pr_kw_comp[nlag, :]) if pr_kw_comp is not None else pr_kw_comp[nlag, :]
+
+    # save netcdf composite
+    out_nc = os.path.join(output_dir, f'{model_name}_kw_composite_lag_lon_prano_prkw_history_{lon_ref}.nc')
+    save_composite_to_netcdf(out_nc, pr_ano_comp, pr_kw_comp, lon, nlag)
+
+    # compute simple metrics: zonal wavenumber and frequency via lag regression on strong points
+    if model_name != 'GPCP':
+        pr_kw_plot = pr_kw_comp * 86400
+    else:
+        pr_kw_plot = pr_kw_comp
+
+    # thresholding
+    pr_strong = np.where(pr_kw_plot >= 1.5, pr_kw_plot, np.nan)
+    istrong = np.argwhere(~np.isnan(pr_strong))
+    if istrong.size == 0:
+        print('No strong points found for regression')
+        return
+
+    itlag_strong = istrong[:, 0]
+    ilon_strong = istrong[:, 1]
+
+    # regression lon ~ tlag
+    X = tlag[itlag_strong].reshape(-1, 1)
+    y = lon[ilon_strong]
+    regr = linear_model.LinearRegression()
+    regr.fit(X, y)
+    b1 = regr.coef_[0]
+    Cp_ave = b1 * 111000.0 / (24 * 3600.0)
+
+    np.savez(
+        os.path.join(output_dir, f'{model_name}_kw_zwnum_freq_Cp_ave_from_precip_lag_regression_history_{lon_ref}.npz'),
+        Cp_ave=Cp_ave,
+    )
+
+    # plotting (minimal)
+    if debug_plot:
+        import matplotlib.pyplot as plt
+        plt.figure()
+        plt.plot(phase_bin, pr_kw_phase_mean)
+        plt.title(f'{model_name} KW phase composite')
+        plt.show()
+
+
+if __name__ == "__main__":
+    print("Phase Analysis Module for Wave Tools")
+    print("====================================")
+    print("\nAvailable functions:")
+    print("  - remove_clm: 去除季节循环气候态")
+    print("  - optimize_peak_detection: 峰值检测")
+    print("  - meridional_projection: 纬向投影")
+    print("  - calculate_kelvin_phase: 计算Kelvin波相位")
+    print("  - phase_composite: 相位合成分析")
+    print("  - lag_composite: 滞后合成分析")
+    print("\nExample usage:")
+    print("  >>> from wave_tools.phase import meridional_projection, calculate_kelvin_phase")
+    print("  >>> kelvin_eq = meridional_projection(kelvin_data, lat)")
+    print("  >>> phase = calculate_kelvin_phase(kelvin_eq, V_peak)")
+
 
 
 

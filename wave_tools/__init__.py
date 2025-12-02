@@ -59,6 +59,12 @@ from .phase import (
     remove_clm,
     find_local_extrema,
     butter_lowpass_filter,
+    meridional_projection,
+    calculate_kelvin_phase,
+    phase_composite,
+    lag_composite,
+    save_composite_to_netcdf,
+    composite_kw_phase,
 )
 
 # ===== 诊断工具 =====
@@ -158,6 +164,12 @@ __all__ = [
     # 相位分析
     'optimize_peak_detection',
     'remove_clm',
+    'meridional_projection',
+    'calculate_kelvin_phase',
+    'phase_composite',
+    'lag_composite',
+    'save_composite_to_netcdf',
+    'composite_kw_phase',
     
     # 诊断
     'gross_moist_stability',
