@@ -43,7 +43,7 @@ from .spectral import (
 )
 
 # 波动滤波
-from .filters import WaveFilter
+from .filters import WaveFilter, CCKWFilter
 
 # EOF分析
 from .eof import (
@@ -135,6 +135,7 @@ __all__ = [
     'WKSpectralAnalysis',
     'SpectralConfig',
     'WaveFilter',
+    'CCKWFilter',
     'TaylorDiagram',
     'EOFAnalyzer',
     

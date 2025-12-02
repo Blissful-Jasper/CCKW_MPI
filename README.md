@@ -68,7 +68,7 @@ power_sym, power_asym, background = calculate_wk_spectrum(
 )
 ```
 
-### 示例2: 提取Kelvin波
+### 示例2: 提取Kelvin波（方法1：传统WaveFilter）
 
 ```python
 from wave_tools.filters import WaveFilter
@@ -76,6 +76,40 @@ from wave_tools.filters import WaveFilter
 wf = WaveFilter()
 kelvin = wf.extract_wave_signal(data, wave_name='kelvin', use_parallel=True)
 kelvin.to_netcdf('kelvin_filtered.nc')
+```
+
+### 示例2.5: 提取Kelvin波（方法2：CCKWFilter - 推荐⭐）
+
+```python
+from wave_tools.filters import CCKWFilter
+import xarray as xr
+
+# 读取数据
+pr_data = xr.open_dataarray('pr_data.nc')
+
+# 初始化滤波器
+wave_filter = CCKWFilter(
+    ds=pr_data,
+    sel_dict={'time': slice('1980-01-01', '1993-12-31'), 'lat': slice(-15, 15)},
+    wave_name='kelvin',
+    units='mm/day',
+    spd=1,
+    n_workers=4
+)
+
+# 方式1：逐步执行
+wave_filter.load_data()
+wave_filter.detrend_data()
+wave_filter.fft_transform()
+wave_filter.apply_filter()
+wave_filter.inverse_fft()
+filtered_data = wave_filter.create_output()
+
+# 方式2：一键执行（推荐）
+filtered_data = wave_filter.process()
+
+# 计算标准差
+std_data = filtered_data.std(dim='time')
 ```
 
 ### 示例3: 绘制频谱图
@@ -148,7 +182,7 @@ plot_wk_spectrum(
 
 #### 主要类
 
-**`WaveFilter`** - 波动滤波器
+**`WaveFilter`** - 波动滤波器（谐波分析方法）
 
 | 方法 | 功能 | 参数说明 |
 |------|------|----------|
@@ -156,6 +190,26 @@ plot_wk_spectrum(
 | `add_wave_param(wave_name, freq_range, wnum_range, equiv_depth)` | 添加自定义波动 | freq_range: 周期范围(天)<br/>wnum_range: 波数范围<br/>equiv_depth: 等效深度(m) |
 | `get_available_waves()` | 获取可用波动列表 | 返回: ['kelvin', 'er', 'mrg', ...] |
 | `get_wave_params(wave_name)` | 查看波动参数 | 返回: dict |
+
+**`CCKWFilter`** - 对流耦合波动滤波器（频率-波数空间滤波，使用Dask并行）⭐
+
+| 方法 | 功能 | 参数说明 |
+|------|------|----------|
+| `__init__(ds, var, sel_dict, wave_name, units, spd, n_workers, verbose)` | 初始化滤波器 | ds: 数据源<br/>var: 变量名（Dataset时需要）<br/>sel_dict: 选择字典<br/>wave_name: 'kelvin'或'er'<br/>spd: 每天采样次数<br/>n_workers: 并行工作进程数 |
+| `load_data()` | 加载并预处理数据 | 自动应用sel_dict筛选 |
+| `detrend_data()` | 数据去趋势 | 移除年际变化和线性趋势，应用Tukey窗口 |
+| `fft_transform()` | 2D FFT变换 | 计算波数-频率网格 |
+| `apply_filter()` | 应用滤波器 | 根据波动类型设置mask |
+| `inverse_fft()` | 逆FFT变换 | 获取滤波后的实空间数据 |
+| `create_output()` | 创建输出 | 返回带属性的xr.DataArray |
+| `process()` | **一键执行完整流程** | 返回滤波后数据 |
+
+**CCKWFilter特点**：
+- ✅ 基于Wheeler-Kiladis频率-波数滤波方法
+- ✅ 使用Dask进行大规模数据并行处理
+- ✅ 自动应用浅水波色散关系约束
+- ✅ 支持Kelvin波和ER波
+- ✅ 提供详细的处理信息和诊断输出
 
 #### 预定义波动类型
 
