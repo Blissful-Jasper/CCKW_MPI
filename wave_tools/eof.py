@@ -901,6 +901,320 @@ def eof_xeofs(data: xr.DataArray, **kwargs) -> Tuple[EOFAnalyzer, Dict, Optional
     return quick_eof_analysis(data, method='xeofs', **kwargs)
 
 
+# ============================================================================
+# Vertical Mode Decomposition with NaN Handling
+# ============================================================================
+
+def vertical_eof_with_nan_handling(
+    vert_vel: xr.DataArray,
+    n_modes: int = 2,
+    zg: Optional[xr.DataArray] = None
+) -> Tuple[xr.DataArray, xr.DataArray, xr.DataArray]:
+    """
+    Perform EOF analysis on vertical velocity data with proper NaN handling.
+    
+    This function is specifically designed for vertical velocity fields that may
+    contain NaN values (e.g., land/ocean masked data). It removes NaN points before
+    EOF analysis and reconstructs the results back to the original grid.
+    
+    Parameters
+    ----------
+    vert_vel : xr.DataArray
+        Vertical velocity data with dimensions (time, lat, lon, level) or similar.
+        Can contain NaN values which will be handled automatically.
+    n_modes : int, default=2
+        Number of EOF modes to compute
+    zg : xr.DataArray, optional
+        Geopotential height or pressure levels for coordinate assignment
+        
+    Returns
+    -------
+    eofs : xr.DataArray
+        EOF spatial patterns with dimensions (mode, level)
+    pcs : xr.DataArray
+        Principal components with dimensions (mode, time, lat, lon)
+    explained_variance : xr.DataArray
+        Explained variance ratio for each mode
+        
+    Examples
+    --------
+    >>> # Load data with ocean mask applied
+    >>> wa_data = xr.open_dataset('wa_data.nc')['wa']
+    >>> wa_data = wa_data.where(ocean_mask, drop=False)  # NaN over land
+    >>> 
+    >>> # Perform EOF analysis
+    >>> eofs, pcs, var_ratio = vertical_eof_with_nan_handling(wa_data, n_modes=2)
+    >>> 
+    >>> print(f"Mode 1 explains {var_ratio[0].values:.1%} of variance")
+    >>> print(f"EOFs shape: {eofs.shape}")  # (2, n_levels)
+    >>> print(f"PCs shape: {pcs.shape}")    # (2, n_time, n_lat, n_lon)
+    
+    Notes
+    -----
+    - Requires xeofs library: pip install xeofs
+    - NaN values are automatically removed before EOF computation
+    - Results are reconstructed to original grid with NaN preserved
+    - Sign convention is arbitrary; consider using align_eof_signs() for comparison
+    """
+    try:
+        import xeofs as xe
+    except ImportError:
+        raise ImportError(
+            "xeofs library is required. Install with: pip install xeofs"
+        )
+    
+    features, valid_mask, original_coords = _array_to_features(vert_vel)
+    model = _get_eof_model(features, n_modes=n_modes)
+    components = model.components()
+    scores = model.scores()
+    scores = _reconstruct_scores(vert_vel, scores, valid_mask, original_coords)
+    explained_variance = model.explained_variance_ratio()
+    
+    eofs, pcs = (components, scores)
+    
+    if zg is not None:
+        eofs = eofs.assign_coords(level=zg)
+    
+    return eofs, pcs, explained_variance
+
+
+def _array_to_features(vert_vel: xr.DataArray) -> Tuple[xr.DataArray, xr.DataArray, Dict]:
+    """
+    Convert data to feature matrix while removing NaN values.
+    
+    Returns
+    -------
+    features : xr.DataArray
+        Feature matrix without NaN values
+    valid_mask : xr.DataArray
+        Boolean mask indicating valid sample points
+    original_coords : dict
+        Dictionary containing original coordinates for reconstruction
+    """
+    # Stack data
+    stacked = vert_vel.stack(sample=('time', 'lat', 'lon'))
+    
+    # Save original coordinate and shape information
+    original_coords = {
+        'sample': stacked.sample,
+        'level': stacked.level
+    }
+    
+    # Create valid data mask (False if all levels are NaN)
+    valid_mask = ~stacked.isnull().all(dim='level')
+    
+    # Keep only valid sample points
+    features = stacked.isel(sample=valid_mask.values).persist()
+    
+    print(f"Original samples: {len(stacked.sample)}, Valid samples: {len(features.sample)}")
+    print(f"Removed {(~valid_mask).sum().values} NaN samples")
+    
+    return features, valid_mask, original_coords
+
+
+def _get_eof_model(features: xr.DataArray, n_modes: int = 2):
+    """
+    Create and fit EOF model.
+    
+    Parameters
+    ----------
+    features : xr.DataArray
+        Feature matrix (should not contain NaN)
+    n_modes : int
+        Number of modes to compute
+        
+    Returns
+    -------
+    model : xeofs.single.EOF
+        Fitted EOF model
+    """
+    import xeofs as xe
+    model = xe.single.EOF(n_modes=n_modes, check_nans=False)
+    model.fit(features, dim="sample")
+    return model
+
+
+def _reconstruct_scores(
+    ds: xr.DataArray,
+    scores: xr.DataArray,
+    valid_mask: xr.DataArray,
+    original_coords: Dict
+) -> xr.DataArray:
+    """
+    Reconstruct scores to original data shape with NaN filled back in.
+    
+    Parameters
+    ----------
+    ds : xr.DataArray
+        Original dataset (for dimension reference)
+    scores : xr.DataArray
+        Computed PC scores from EOF model
+    valid_mask : xr.DataArray
+        Boolean mask of valid points
+    original_coords : dict
+        Original coordinates
+        
+    Returns
+    -------
+    rscores : xr.DataArray
+        Reconstructed scores with original dimensions
+    """
+    # Create full NaN array matching original stacked shape
+    full_scores = xr.DataArray(
+        np.full((scores.mode.size, len(original_coords['sample'])), np.nan),
+        coords={'mode': scores.mode, 'sample': original_coords['sample']},
+        dims=['mode', 'sample']
+    )
+    
+    # Fill in valid scores at corresponding positions
+    full_scores.loc[dict(sample=original_coords['sample'][valid_mask])] = scores.values
+    
+    # Unstack back to original dimensions
+    rscores = full_scores.unstack("sample")
+    
+    # Reindex if cell coordinate exists
+    if 'cell' in ds.coords:
+        rscores = rscores.reindex({"cell": ds.cell.values}, fill_value=np.nan)
+    
+    return rscores
+
+
+def align_eof_signs(
+    eof_ref: xr.DataArray,
+    eof_target: xr.DataArray
+) -> int:
+    """
+    Align the sign of target EOF to match reference EOF based on correlation.
+    
+    Parameters
+    ----------
+    eof_ref : xr.DataArray
+        Reference EOF pattern
+    eof_target : xr.DataArray
+        Target EOF pattern to align
+        
+    Returns
+    -------
+    sign : int
+        Sign multiplier (+1 or -1)
+        
+    Examples
+    --------
+    >>> # Align P4K experiment to CNTL reference
+    >>> sign = align_eof_signs(eofs_cntl.isel(mode=0), eofs_p4k.isel(mode=0))
+    >>> eofs_p4k_aligned = eofs_p4k.copy()
+    >>> eofs_p4k_aligned[0, :] *= sign
+    """
+    correlation = np.corrcoef(eof_ref.values, eof_target.values)[0, 1]
+    return 1 if correlation > 0 else -1
+
+
+def compare_vertical_eofs(
+    eofs_dict: Dict[str, Tuple[xr.DataArray, xr.DataArray, xr.DataArray]],
+    reference_key: str = None,
+    figsize: Tuple[int, int] = (14, 6),
+    colors: List[str] = None,
+    save_path: str = None
+) -> plt.Figure:
+    """
+    Compare vertical EOF profiles from multiple experiments.
+    
+    Parameters
+    ----------
+    eofs_dict : dict
+        Dictionary with experiment names as keys and (eofs, pcs, variance) tuples as values
+        Example: {'CNTL': (eofs_cntl, pcs_cntl, var_cntl), 'P4K': (...), '4CO2': (...)}
+    reference_key : str, optional
+        Key for reference experiment. If provided, signs will be aligned to this reference.
+    figsize : tuple, default=(14, 6)
+        Figure size (width, height)
+    colors : list of str, optional
+        Colors for each experiment. If None, uses default color scheme.
+    save_path : str, optional
+        Path to save the figure. If None, figure is not saved.
+        
+    Returns
+    -------
+    fig : matplotlib.figure.Figure
+        Figure object
+        
+    Examples
+    --------
+    >>> results = {
+    ...     'CNTL': vertical_eof_with_nan_handling(wa_cntl, n_modes=2),
+    ...     'P4K': vertical_eof_with_nan_handling(wa_p4k, n_modes=2),
+    ...     '4CO2': vertical_eof_with_nan_handling(wa_4co2, n_modes=2)
+    ... }
+    >>> fig = compare_vertical_eofs(results, reference_key='CNTL',
+    ...                             save_path='./figures/eof_comparison.png')
+    """
+    if colors is None:
+        colors = ['#2E86AB', '#A23B72', '#F18F01', '#006D77', '#E63946']
+    
+    markers = ['o', 's', '^', 'D', 'v']
+    linestyles = ['-', '--', '-.', ':', '-']
+    
+    # Align signs if reference provided
+    eofs_aligned = {}
+    if reference_key and reference_key in eofs_dict:
+        eofs_ref, _, var_ref = eofs_dict[reference_key]
+        eofs_aligned[reference_key] = (eofs_ref, var_ref)
+        
+        for key, (eofs, pcs, var) in eofs_dict.items():
+            if key == reference_key:
+                continue
+            eofs_copy = eofs.copy()
+            for mode_idx in range(eofs.mode.size):
+                sign = align_eof_signs(eofs_ref.isel(mode=mode_idx), 
+                                      eofs.isel(mode=mode_idx))
+                eofs_copy[mode_idx, :] *= sign
+            eofs_aligned[key] = (eofs_copy, var)
+    else:
+        eofs_aligned = {k: (v[0], v[2]) for k, v in eofs_dict.items()}
+    
+    # Determine number of modes
+    n_modes = min(eof[0].mode.size for eof in eofs_aligned.values())
+    
+    # Create figure
+    fig, axes = plt.subplots(1, n_modes, figsize=figsize)
+    if n_modes == 1:
+        axes = [axes]
+    
+    for mode_idx in range(n_modes):
+        ax = axes[mode_idx]
+        
+        for i, (exp_name, (eofs, var)) in enumerate(eofs_aligned.items()):
+            eof_profile = eofs.isel(mode=mode_idx)
+            
+            ax.plot(eof_profile.values, eof_profile.level.values,
+                   marker=markers[i % len(markers)],
+                   linestyle=linestyles[i % len(linestyles)],
+                   linewidth=2.5, markersize=7,
+                   color=colors[i % len(colors)],
+                   label=f'{exp_name} ({var[mode_idx].values:.1%})',
+                   alpha=0.8)
+        
+        ax.set_title(f'EOF Mode {mode_idx+1}', fontsize=12, fontweight='bold')
+        ax.set_xlabel('EOF Amplitude', fontsize=11)
+        ax.set_ylabel('Pressure Level (hPa)', fontsize=11)
+        ax.invert_yaxis()
+        ax.grid(True, alpha=0.3, linestyle=':', linewidth=0.8)
+        ax.axvline(x=0, color='black', linestyle='-', linewidth=1.2, alpha=0.7)
+        ax.legend(loc='best', fontsize=9, framealpha=0.9)
+        
+        # Symmetric x-axis
+        xlim = max(abs(ax.get_xlim()[0]), abs(ax.get_xlim()[1]))
+        ax.set_xlim(-xlim, xlim)
+    
+    plt.tight_layout()
+    
+    if save_path:
+        fig.savefig(save_path, dpi=300, bbox_inches='tight')
+        print(f"✅ Figure saved to: {save_path}")
+    
+    return fig
+
+
 if __name__ == "__main__":
     print("EOF Analysis Module for Wave Tools")
     print("===================================")
@@ -910,8 +1224,10 @@ if __name__ == "__main__":
     print("  - quick_eof_analysis: One-line EOF analysis")
     print("  - eof_svd: SVD-based EOF (convenience)")
     print("  - eof_xeofs: xeofs-based EOF (convenience)")
+    print("  - vertical_eof_with_nan_handling: EOF for vertical modes with NaN handling")
+    print("  - align_eof_signs: Align EOF signs across experiments")
+    print("  - compare_vertical_eofs: Compare EOF profiles from multiple experiments")
     print("\nExample usage:")
-    print("  >>> from wave_tools.eof import EOFAnalyzer")
-    print("  >>> analyzer = EOFAnalyzer(method='svd')")
-    print("  >>> results = analyzer.fit(data, n_modes=4)")
-    print("  >>> analyzer.plot_vertical_profiles()")
+    print("  >>> from wave_tools.eof import vertical_eof_with_nan_handling")
+    print("  >>> eofs, pcs, var = vertical_eof_with_nan_handling(wa_data, n_modes=2)")
+    print("  >>> print(f'Mode 1 variance: {var[0].values:.2%}')")
