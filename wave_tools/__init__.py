@@ -42,6 +42,26 @@ from .spectral import (
     calculate_wk_spectrum,
 )
 
+# 交叉谱分析
+from .cross_spectrum import (
+    CrossSpectrumConfig,
+    calculate_cross_spectrum,
+    quick_cross_spectrum,
+    remove_annual_cycle,
+    nan_to_value_by_interp_3D,
+)
+
+# 交叉谱分析工具（重构版本，更通用）
+from .cross_spectrum_analysis import (
+    MemoryMonitor,
+    load_netcdf_data,
+    load_multiple_experiments,
+    preprocess_data_with_mask,
+    compute_cross_spectrum_for_experiments,
+    plot_cross_spectrum_panel,
+    analyze_cross_spectrum,
+)
+
 # 波动滤波
 from .filters import WaveFilter, CCKWFilter
 
@@ -140,13 +160,25 @@ __all__ = [
     # 核心类
     'WKSpectralAnalysis',
     'SpectralConfig',
+    'CrossSpectrumConfig',
     'WaveFilter',
     'CCKWFilter',
     'TaylorDiagram',
     'EOFAnalyzer',
+    'MemoryMonitor',
     
     # 频谱分析
     'calculate_wk_spectrum',
+    'calculate_cross_spectrum',
+    'quick_cross_spectrum',
+    
+    # 交叉谱分析（重构版本）
+    'load_netcdf_data',
+    'load_multiple_experiments',
+    'preprocess_data_with_mask',
+    'compute_cross_spectrum_for_experiments',
+    'plot_cross_spectrum_panel',
+    'analyze_cross_spectrum',  # 一站式函数
     
     # Matsuno模态
     'kelvin_mode',
@@ -181,6 +213,7 @@ __all__ = [
     'plot_cckw_envelope',
     'plot_spatial_field',
     'save_figure',
+    'easyxp'
     
     # 工具
     'load_data',
@@ -215,18 +248,21 @@ def print_info():
     邮箱: {__email__}
     
     主要模块:
-    - matsuno.py       Matsuno理论模态
-    - spectral.py      频谱分析
-    - filters.py       波动滤波
-    - phase.py         相位分析
-    - eof.py           EOF垂直模态分解
-    - diagnostics.py   诊断工具
-    - plotting.py      绘图功能
-    - utils.py         工具函数
+    - matsuno.py                 Matsuno理论模态
+    - spectral.py                频谱分析
+    - cross_spectrum.py          交叉谱分析（原始版本）
+    - cross_spectrum_analysis.py 交叉谱分析（重构版本，推荐）
+    - filters.py                 波动滤波
+    - phase.py                   相位分析
+    - eof.py                     EOF垂直模态分解
+    - diagnostics.py             诊断工具
+    - plotting.py                绘图功能
+    - utils.py                   工具函数
     
     快速开始:
     >>> from wave_tools import *
     >>> help(WKSpectralAnalysis)
+    >>> help(analyze_cross_spectrum)  # 新的一站式交叉谱分析
     >>> help(WaveFilter)
     >>> help(EOFAnalyzer)
     """

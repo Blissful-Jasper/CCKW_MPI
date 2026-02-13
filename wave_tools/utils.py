@@ -52,6 +52,13 @@ def create_cmap_from_string(color_string: str) -> colors.ListedColormap:
     # 创建并返回反转后的颜色映射对象
     return colors.ListedColormap(color_list[::-1])
 
+def create_colormap():
+    from matplotlib.colors import LinearSegmentedColormap
+    """Create improved red-white-blue colormap"""
+    colors = ['#00008B', '#0000FF', '#4169E1', '#87CEEB', '#E0F6FF',
+              '#FFFFFF', 
+              '#FFE0E0', '#FFB6C1', '#FF6B6B', '#FF0000', '#8B0000']
+    return LinearSegmentedColormap.from_list('improved_bwr', colors, N=256)
 
 def filter_series(series, min_wn, max_wn):
     return series[(series.index >= min_wn) & (series.index <= max_wn)]
@@ -416,7 +423,7 @@ Performance improvements:
 """
 
 
-MAXIMUM_LAT_RANGE = 25
+
 
 
 def dataset_healpix_to_equatorial_latlon(
@@ -458,7 +465,7 @@ def dataarray_healpix_to_equatorial_latlon(
     """
     if not HAS_HEALPY:
         raise ImportError("healpy is required for HEALPix operations. Install with: pip install healpy")
-    
+    MAXIMUM_LAT_RANGE = 90
     if minmax_lat > MAXIMUM_LAT_RANGE:
         raise ValueError(f"minmax_lat={minmax_lat} too wide for equatorial analysis.")
 

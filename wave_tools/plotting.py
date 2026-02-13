@@ -344,7 +344,7 @@ def plot_spatial_field(data: xr.DataArray,
     return f
 
 def set_axis_for_wave(ax, text_size, open_ma = True, wig=True, kelvin_box=True,freq_lines=True, depth=True, \
-                      cpd_lines=[3, 6, 30], max_wn_plot=15, max_freq_plot=0.5, labels=True):
+                      cpd_lines=[3, 6, 30], max_wn_plot=15, max_freq_plot=0.5, labels=True,wig_text=True):
     ax.axvline(x=0, color='k', linestyle='--')
     ax.set_xlim((-max_wn_plot,max_wn_plot))
     ax.set_ylim((0.02,max_freq_plot))
@@ -355,7 +355,7 @@ def set_axis_for_wave(ax, text_size, open_ma = True, wig=True, kelvin_box=True,f
         
         
     if kelvin_box:
-            ax.plot(kw_x[0], kw_y[0], 'green', linewidth=1.2, linestyle='solid')
+            ax.plot(kw_x[0], kw_y[0], 'purple', linewidth=1.2, linestyle='solid',zorder=5)
             
     if freq_lines:
         # Assuming self.freq_lines and self.cpd_lines are defined elsewhere
@@ -386,8 +386,8 @@ def set_axis_for_wave(ax, text_size, open_ma = True, wig=True, kelvin_box=True,f
     if open_ma:
     
         matsuno_modes = mp.matsuno_modes_wk(he=[90,25,8],n=[1],max_wn=max_wn_plot)
-        kelvin_series_90 = filter_series(matsuno_modes[90]['Kelvin(he=90m)'], 2, 5.2)
-        kelvin_series_8 = filter_series(matsuno_modes[8]['Kelvin(he=8m)'], 2.6, 14)
+        # kelvin_series_90 = filter_series(matsuno_modes[90]['Kelvin(he=90m)'], 2, 5.2)
+        # kelvin_series_8 = filter_series(matsuno_modes[8]['Kelvin(he=8m)'], 2.6, 14)
         
         for key in matsuno_modes:
             # print(key)
@@ -406,8 +406,10 @@ def set_axis_for_wave(ax, text_size, open_ma = True, wig=True, kelvin_box=True,f
                 ax.plot(matsuno_modes[key]['EIG(n=1,he={}m)'.format(key)],color='k',linestyle='-')
                 ax.plot(matsuno_modes[key]['EIG(n=1,he={}m)'.format(key)],color='k',linestyle='-')
                 if kelvin_box:
-                    ax.plot(kelvin_series_90, color='g', linestyle='-')
-                    ax.plot(kelvin_series_8, color='g', linestyle='-')
+                    kx,ky = get_cckw_envelope_curve()
+                    ax.plot(kx[0], ky[0], 'purple', linewidth=1.2, linestyle='solid')
+                    # ax.plot(kelvin_series_90, color='purple', linestyle='-')
+                    # ax.plot(kelvin_series_8, color='purple', linestyle='-')
 
         if labels:
             key = list(matsuno_modes.keys())[len(list(matsuno_modes.keys()))//2] 
@@ -419,7 +421,9 @@ def set_axis_for_wave(ax, text_size, open_ma = True, wig=True, kelvin_box=True,f
             k = np.where(wn == wn[k])[0]
             ax.text(wn[k]+0.4,matsuno_modes[key]['ER(n=1,he={}m)'.format(key)].iloc[k]+0.02,'ER', \
             bbox={'facecolor':'w','alpha':0.9,'edgecolor':'none'},fontsize=text_size-6)
-            ax.text(wn[k]+0.4,matsuno_modes[key]['WIG(n=1,he={}m)'.format(key)].iloc[k]+0.02,'n=1 WIG', \
+            if wig_text:
+                
+                ax.text(wn[k]+0.4,matsuno_modes[key]['WIG(n=1,he={}m)'.format(key)].iloc[k]+0.02,'n=1 WIG', \
                         bbox={'facecolor':'w','alpha':1,'edgecolor':'none'},fontsize=text_size-6)
 
 # ==================== 泰勒图 ====================
